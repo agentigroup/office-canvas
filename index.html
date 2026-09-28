@@ -1,1244 +1,586 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Visual AI Research Canvas</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-
-    <!-- Firebase Realtime Database SDKs -->
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
-
-    <style>
-        body {
-            font-family: 'Inter', sans-serif;
-            margin: 0;
-            overflow: hidden;
-            background-color: #f8fafc;
-            user-select: none;
-        }
-
-        #viewport {
-            width: 100vw;
-            height: 100vh;
-            overflow: hidden;
-            position: relative;
-            cursor: grab;
-        }
-
-        #viewport:active {
-            cursor: grabbing;
-        }
-
-        #viewport.mode-draw {
-            cursor: crosshair !important;
-        }
-
-        #viewport.mode-eraser {
-            cursor: cell !important;
-        }
-
-        #canvas-plane {
-            position: absolute;
-            width: 8000px;
-            height: 8000px;
-            transform-origin: 0 0;
-            background-image: radial-gradient(#cbd5e1 1.5px, transparent 1.5px);
-            background-size: 24px 24px;
-        }
-
-        .dock-bar {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(226, 232, 240, 0.9);
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
-            border-radius: 20px;
-        }
-
-        .dock-btn {
-            width: 42px;
-            height: 42px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 12px;
-            color: #334155;
-            transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-            position: relative;
-        }
-
-        .dock-btn:hover {
-            background-color: #f1f5f9;
-            color: #0f172a;
-            transform: scale(1.04);
-        }
-
-        .dock-btn.active {
-            background-color: #eff6ff;
-            color: #2563eb;
-            box-shadow: inset 0 0 0 1.5px #3b82f6;
-        }
-
-        .canvas-card {
-            position: absolute;
-            transition: box-shadow 0.2s ease, border-color 0.2s ease;
-        }
-
-        .canvas-card.z-low { z-index: 1 !important; }
-        .canvas-card:not(.z-low) { z-index: 10; }
-        .canvas-card.dragging { z-index: 40 !important; }
-
-        .canvas-card:hover {
-            box-shadow: 0 12px 28px -4px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08);
-        }
-
-        .canvas-card.selected-card {
-            box-shadow: 0 0 0 2px #9ca3af, 0 12px 28px -4px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08);
-        }
-
-        .connection-port {
-            position: absolute;
-            width: 12px;
-            height: 12px;
-            background: #1f2937;
-            border: 2px solid white;
-            border-radius: 50%;
-            opacity: 0;
-            transition: opacity 0.2s, transform 0.1s;
-            cursor: crosshair;
-            z-index: 20;
-        }
-
-        .canvas-card:hover .connection-port, .connection-port:hover { opacity: 1; }
-        .connection-port:hover { transform: scale(1.4); background: #000; }
-
-        .port-top { top: -6px; left: calc(50% - 6px); }
-        .port-right { right: -6px; top: calc(50% - 6px); }
-        .port-bottom { bottom: -6px; left: calc(50% - 6px); }
-        .port-left { left: -6px; top: calc(50% - 6px); }
-
-        .resize-handle {
-            position: absolute;
-            bottom: 0;
-            right: 0;
-            width: 16px;
-            height: 16px;
-            cursor: nwse-resize;
-            background: linear-gradient(135deg, transparent 50%, #94a3b8 50%);
-            border-bottom-right-radius: inherit;
-            z-index: 20;
-            opacity: 0;
-            transition: opacity 0.2s;
-        }
-        .canvas-card:hover .resize-handle { opacity: 1; }
-
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
-        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-
-        .connection-line {
-            cursor: pointer;
-            transition: stroke-width 0.1s;
-        }
-        .connection-line:hover {
-            stroke-width: 5px;
-            stroke: #ef4444;
-        }
-
-        .sketch-path {
-            transition: stroke-width 0.1s;
-        }
-        .sketch-path.erasable:hover {
-            stroke: #ef4444 !important;
-            opacity: 0.8 !important;
-            cursor: pointer;
-        }
-
-        .matrix-cell.active { background-color: #3b82f6; border-color: #2563eb; }
-        .grid-drag-handle { cursor: move; }
-        .grid-cell-highlight {
-            background-color: rgba(59, 130, 246, 0.2) !important;
-            border-color: #2563eb !important;
-            border-style: solid !important;
-        }
-
-        .editable-content ul, .editable-desc ul { list-style-type: disc; padding-left: 1.5rem; margin-top: 0.25rem; margin-bottom: 0.25rem; }
-        .editable-content ol, .editable-desc ol { list-style-type: decimal; padding-left: 1.5rem; margin-top: 0.25rem; margin-bottom: 0.25rem; }
-        .editable-content a, .editable-desc a { text-decoration: underline; color: #2563eb; }
-
-        .marquee-box {
-            position: absolute;
-            border: 1.5px dashed #3b82f6;
-            background: rgba(59, 130, 246, 0.08);
-            pointer-events: none;
-            z-index: 45;
-        }
-
-        .search-dim { opacity: 0.15; filter: grayscale(70%); }
-        .search-match { box-shadow: 0 0 0 3px #f59e0b, 0 12px 28px -4px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08) !important; }
-        .exporting .connection-port, .exporting .resize-handle, .exporting .canvas-card > button { display: none !important; }
-    </style>
-</head>
-<body class="flex h-screen w-screen text-gray-900 antialiased selection:bg-gray-200">
-
-    <!-- Primary Dock -->
-    <div class="fixed left-5 top-1/2 -translate-y-1/2 z-40 flex items-center space-x-3">
-        <div class="dock-bar p-2 flex flex-col items-center space-y-1.5 select-none">
-            <button id="btn-select" onclick="setActiveTool('select')" class="dock-btn active" title="Select / Move Canvas">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l7 18 3-7 7-3L3 3z"/></svg>
-            </button>
-            <button id="btn-note" draggable="true" ondragstart="startPaletteDrag(event, 'note')" onclick="addCardDirectly('note')" class="dock-btn" title="Add Sticky Note">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 3H5a2 2 0 00-2 2v14a2 2 0 002 2h10.5l6-6V5a2 2 0 00-2-2z"/><path d="M15 15h6"/></svg>
-            </button>
-            <button id="btn-grid" onclick="toggleCustomPopover('grid-popover', event)" class="dock-btn" title="Add Grid Table">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
-            </button>
-            <button id="btn-text" draggable="true" ondragstart="startPaletteDrag(event, 'text')" onclick="addCardDirectly('text')" class="dock-btn" title="Add Text">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3M12 4v16M9 20h6"/></svg>
-            </button>
-            <button id="btn-shape" onclick="toggleCustomPopover('shape-popover', event)" class="dock-btn" title="Add Shape">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><circle cx="17.5" cy="6.5" r="3.5"/><path d="M12 21l5-9h-10z"/></svg>
-            </button>
-            <div class="w-6 h-px bg-slate-200 my-1"></div>
-            <button id="btn-pen" onclick="togglePenMode()" class="dock-btn" title="Sketch Freehand">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>
-            </button>
-            <button id="btn-link" draggable="true" ondragstart="startPaletteDrag(event, 'link')" onclick="addCardDirectly('link')" class="dock-btn" title="Add Web Link">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-            </button>
-            <button id="btn-image" draggable="true" ondragstart="startPaletteDrag(event, 'image')" onclick="addCardDirectly('image')" class="dock-btn" title="Import Image">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-            </button>
-            <button id="btn-comment" draggable="true" ondragstart="startPaletteDrag(event, 'comment')" onclick="addCardDirectly('comment')" class="dock-btn" title="Add Comment">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><circle cx="8" cy="10" r="1"/><circle cx="12" cy="10" r="1"/><circle cx="16" cy="10" r="1"/></svg>
-            </button>
-            <button id="btn-checklist" draggable="true" ondragstart="startPaletteDrag(event, 'checklist')" onclick="addCardDirectly('checklist')" class="dock-btn" title="Add Checklist">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-            </button>
-            <button id="btn-source" draggable="true" ondragstart="startPaletteDrag(event, 'source')" onclick="addCardDirectly('source')" class="dock-btn" title="Add Research Source">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v14l4-3 4 3 4-3 4 3v-3"/><path d="m9 10 2 2 4-4"/></svg>
-            </button>
-            <div class="w-6 h-px bg-slate-200 my-1"></div>
-            <button onclick="openAdminPinModal()" class="dock-btn" title="Settings">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-            </button>
-        </div>
-
-        <!-- Sketch Sub Dock -->
-        <div id="sketch-sub-dock" class="dock-bar p-2 hidden flex flex-col items-center space-y-2 select-none animate-fade-in">
-            <button id="btn-pen-sub" onclick="setSketchType('pen')" class="dock-btn active" title="Pen">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>
-            </button>
-            <button id="btn-highlighter-sub" onclick="setSketchType('highlighter')" class="dock-btn" title="Marker">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4a2 2 0 0 1 2.8 0l5.2 5.2a2 2 0 0 1 0 2.8Z"/></svg>
-            </button>
-            <button id="btn-eraser-sub" onclick="setSketchType('eraser')" class="dock-btn" title="Eraser">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20H7L3 16c-1-1-1-2.5 0-3.5l10-10c1-1 2.5-1 3.5 0l5 5c1 1 1 2.5 0 3.5L11 22"/></svg>
-            </button>
-            <div class="w-6 h-px bg-slate-200 my-1"></div>
-            <div class="flex flex-col space-y-1.5 items-center">
-                <button onclick="setPenWidth(3)" id="sw-3" class="w-6 h-6 rounded-full flex items-center justify-center hover:bg-slate-100 transition active:scale-95"><div class="w-1.5 h-1.5 rounded-full bg-slate-700"></div></button>
-                <button onclick="setPenWidth(6)" id="sw-6" class="w-6 h-6 rounded-full flex items-center justify-center hover:bg-slate-100 transition active:scale-95 border border-blue-500 bg-blue-50"><div class="w-3 h-3 rounded-full bg-slate-700"></div></button>
-                <button onclick="setPenWidth(12)" id="sw-12" class="w-6 h-6 rounded-full flex items-center justify-center hover:bg-slate-100 transition active:scale-95"><div class="w-4 h-4 rounded-full bg-slate-700"></div></button>
-            </div>
-            <div class="w-6 h-px bg-slate-200 my-1"></div>
-            <div class="flex flex-col space-y-2 items-center">
-                <div class="relative w-6 h-6 rounded-full overflow-hidden border border-slate-300 hover:scale-110 transition" title="Custom Color">
-                    <input type="color" id="penColorPicker" value="#2563eb" onchange="setPenColor(this.value)" class="absolute -top-2 -left-2 w-10 h-10 cursor-pointer opacity-0">
-                    <div class="w-full h-full bg-conic-gradient" style="background: conic-gradient(from 0deg, red, yellow, lime, aqua, blue, magenta, red);"></div>
-                </div>
-            </div>
-            <div class="w-6 h-px bg-slate-200 my-1"></div>
-            <button onclick="clearAllSketches()" class="dock-btn text-rose-500 hover:bg-rose-50 hover:text-rose-600" title="Clear All Sketches">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-            </button>
-        </div>
-    </div>
-
-    <!-- Grid Popover Menu -->
-    <div id="grid-popover" class="popover-menu hidden fixed bg-white border border-gray-200 shadow-2xl rounded-2xl p-4 z-50 w-60">
-        <div class="flex justify-between items-center mb-2">
-            <span class="text-xs font-bold text-gray-800">Select Grid Size</span>
-            <button onclick="closePopovers()" class="text-gray-400 hover:text-black text-xs p-1"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
-        </div>
-        <p class="text-[10px] text-gray-500 mb-2 font-medium text-center">Hover to size, Click or Drag to place</p>
-        <div class="flex justify-center">
-            <div id="grid-matrix-container" draggable="true" ondragstart="startGridDrag(event)" onclick="addGridDirectly()" class="inline-block bg-white p-2 rounded-xl border border-gray-300 cursor-pointer hover:border-black transition shadow-sm">
-                <div id="grid-matrix" class="grid gap-0.5" style="grid-template-columns: repeat(8, 1fr);"></div>
-            </div>
-        </div>
-        <p id="grid-matrix-label" class="text-[11px] font-bold text-gray-800 mt-2 text-center">1 x 1 Table</p>
-    </div>
-
-    <!-- Shapes Popover Menu -->
-    <div id="shape-popover" class="popover-menu hidden fixed bg-white border border-gray-200 shadow-2xl rounded-2xl p-3 z-50 w-52">
-        <div class="flex justify-between items-center mb-2">
-            <span class="text-xs font-bold text-gray-800">Select Shape</span>
-            <button onclick="closePopovers()" class="text-gray-400 hover:text-black text-xs p-1"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
-        </div>
-        <p class="text-[10px] text-gray-500 mb-2 font-medium text-center">Click or Drag shape to canvas</p>
-        <div class="grid grid-cols-3 gap-2">
-            <div draggable="true" ondragstart="startPaletteDrag(event, 'shape', 'rect')" onclick="addShapeDirectly('rect')" class="palette-item h-10 border border-gray-300 bg-white rounded-xl hover:bg-gray-100 hover:border-black transition p-1 cursor-pointer flex items-center justify-center" title="Rectangle"><svg style="width: 20px; height: 20px;" viewBox="0 0 100 100" preserveAspectRatio="none"><rect x="2" y="2" width="96" height="96" rx="10" fill="transparent" stroke="black" stroke-width="2" vector-effect="non-scaling-stroke"/></svg></div>
-            <div draggable="true" ondragstart="startPaletteDrag(event, 'shape', 'circle')" onclick="addShapeDirectly('circle')" class="palette-item h-10 border border-gray-300 bg-white rounded-xl hover:bg-gray-100 hover:border-black transition p-1 cursor-pointer flex items-center justify-center" title="Circle"><svg style="width: 20px; height: 20px;" viewBox="0 0 100 100" preserveAspectRatio="none"><circle cx="50" cy="50" r="48" fill="transparent" stroke="black" stroke-width="2" vector-effect="non-scaling-stroke"/></svg></div>
-            <div draggable="true" ondragstart="startPaletteDrag(event, 'shape', 'ellipse')" onclick="addShapeDirectly('ellipse')" class="palette-item h-10 border border-gray-300 bg-white rounded-xl hover:bg-gray-100 hover:border-black transition p-1 cursor-pointer flex items-center justify-center" title="Ellipse"><svg style="width: 20px; height: 20px;" viewBox="0 0 100 100" preserveAspectRatio="none"><ellipse cx="50" cy="50" rx="48" ry="30" fill="transparent" stroke="black" stroke-width="2" vector-effect="non-scaling-stroke"/></svg></div>
-            <div draggable="true" ondragstart="startPaletteDrag(event, 'shape', 'triangle')" onclick="addShapeDirectly('triangle')" class="palette-item h-10 border border-gray-300 bg-white rounded-xl hover:bg-gray-100 hover:border-black transition p-1 cursor-pointer flex items-center justify-center" title="Triangle"><svg style="width: 20px; height: 20px;" overflow="visible" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon points="50,2 2,98 98,98" fill="transparent" stroke="black" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg></div>
-            <div draggable="true" ondragstart="startPaletteDrag(event, 'shape', 'hexagon')" onclick="addShapeDirectly('hexagon')" class="palette-item h-10 border border-gray-300 bg-white rounded-xl hover:bg-gray-100 hover:border-black transition p-1 cursor-pointer flex items-center justify-center" title="Hexagon"><svg style="width: 20px; height: 20px;" overflow="visible" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon points="25,2 75,2 98,50 75,98 25,98 2,50" fill="transparent" stroke="black" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg></div>
-            <div draggable="true" ondragstart="startPaletteDrag(event, 'shape', 'star')" onclick="addShapeDirectly('star')" class="palette-item h-10 border border-gray-300 bg-white rounded-xl hover:bg-gray-100 hover:border-black transition p-1 cursor-pointer flex items-center justify-center" title="Star"><svg style="width: 20px; height: 20px;" overflow="visible" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon points="50,2 64,38 98,38 70,58 82,98 50,75 18,98 30,58 2,38 36,38" fill="transparent" stroke="black" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg></div>
-        </div>
-    </div>
-
-    <!-- Color Popover Menu -->
-    <div id="color-popover" class="popover-menu hidden fixed bg-white border border-gray-200 shadow-2xl rounded-2xl p-3 z-50 w-48">
-        <div class="flex justify-between items-center mb-2">
-            <span class="text-xs font-bold text-gray-800">Card Color</span>
-            <button onclick="closePopovers()" class="text-gray-400 hover:text-black text-xs p-1"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
-        </div>
-        <div class="grid grid-cols-6 gap-1.5 mb-2" id="color-swatch-grid"></div>
-        <div class="flex items-center space-x-2">
-            <input type="color" id="customColorInput" value="#ffffff" onchange="applyColorToTarget(this.value)" class="w-8 h-8 rounded cursor-pointer border border-gray-300 flex-shrink-0">
-            <button onclick="applyColorToTarget(null)" class="flex-grow text-[11px] font-bold text-gray-600 hover:text-black py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50">Reset</button>
-        </div>
-    </div>
-
-    <!-- Snap & Alignment Popover -->
-    <div id="snap-popover" class="popover-menu hidden fixed bg-white border border-gray-200 shadow-2xl rounded-2xl p-4 z-50 w-60">
-        <div class="flex justify-between items-center mb-3">
-            <span class="text-xs font-bold text-gray-800">Snap & Alignment</span>
-            <button onclick="closePopovers()" class="text-gray-400 hover:text-black text-xs p-1"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
-        </div>
-        <div class="flex items-center justify-between mb-3">
-            <div class="pr-2">
-                <div class="text-xs font-bold text-gray-800">Snap to Grid</div>
-                <div class="text-[10px] text-gray-400">Aligns cards while dragging</div>
-            </div>
-            <button id="snapToggleBtn" onclick="toggleSnapGrid()" class="w-10 h-6 rounded-full transition relative flex-shrink-0 bg-gray-200">
-                <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"></span>
-            </button>
-        </div>
-        <div class="flex items-center space-x-1.5 mb-3">
-            <button onclick="setSnapGridSize(10)" data-size="10" class="snap-size-btn flex-1 text-[10px] font-bold py-1.5 rounded-lg border bg-white text-gray-600 border-gray-200 transition">10px</button>
-            <button onclick="setSnapGridSize(20)" data-size="20" class="snap-size-btn flex-1 text-[10px] font-bold py-1.5 rounded-lg border bg-white text-gray-600 border-gray-200 transition">20px</button>
-            <button onclick="setSnapGridSize(40)" data-size="40" class="snap-size-btn flex-1 text-[10px] font-bold py-1.5 rounded-lg border bg-white text-gray-600 border-gray-200 transition">40px</button>
-        </div>
-        <div class="w-full h-px bg-gray-100 mb-3"></div>
-        <div class="flex items-center justify-between">
-            <div class="pr-2">
-                <div class="text-xs font-bold text-gray-800">Ortho Restriction</div>
-                <div class="text-[10px] text-gray-400">Locks drag to horizontal or vertical</div>
-            </div>
-            <button id="orthoToggleBtn" onclick="toggleOrtho()" class="w-10 h-6 rounded-full transition relative flex-shrink-0 bg-gray-200">
-                <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"></span>
-            </button>
-        </div>
-    </div>
-
-    <!-- Board Switcher & Cloud Status -->
-    <div id="boardSwitcherRoot" class="fixed top-6 left-6 z-40 flex items-center space-x-2">
-        <button onclick="toggleBoardMenu(event)" class="bg-white/95 backdrop-blur-md px-4 py-2.5 rounded-2xl shadow-lg border border-gray-200 text-gray-800 font-bold text-xs flex items-center hover:bg-gray-50 transition max-w-[220px]">
-            <svg class="mr-2 flex-shrink-0" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
-            <span id="currentBoardLabel" class="truncate">Shared Canvas</span>
-            <svg class="ml-2 flex-shrink-0" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-        </button>
-
-        <!-- Live Realtime Database Sync Badge -->
-        <div id="cloudSyncBadge" class="bg-white/95 backdrop-blur-md px-3 py-2 rounded-2xl shadow-lg border border-gray-200 text-gray-700 text-[11px] font-semibold flex items-center space-x-1.5 select-none" title="Firebase Status">
-            <span id="syncDot" class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
-            <span id="syncText">Connecting...</span>
-        </div>
-
-        <div id="boardMenu" class="hidden absolute top-full left-0 mt-2 bg-white border border-gray-200 shadow-xl rounded-2xl p-2 w-64">
-            <div id="boardListContainer" class="max-h-60 overflow-y-auto space-y-0.5"></div>
-            <div class="pt-2 mt-2 border-t border-gray-100 flex space-x-2">
-                <input id="newBoardNameInput" type="text" placeholder="New board name" onkeydown="if(event.key==='Enter'){event.preventDefault();createNewBoard();}" class="flex-grow text-xs p-2 border border-gray-200 rounded-xl focus:outline-none">
-                <button onclick="createNewBoard()" class="px-3 py-2 bg-black text-white text-xs font-bold rounded-xl">Add</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Main Canvas Viewport -->
-    <div id="viewport" class="flex-grow h-full relative w-full">
-        <div id="canvas-plane">
-            <svg id="svg-layer" class="absolute inset-0 w-full h-full pointer-events-none" style="z-index: 5;">
-                <defs>
-                    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                        <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f2937"/>
-                    </marker>
-                </defs>
-                <g id="sketches-group"></g>
-                <g id="connections-group"></g>
-            </svg>
-            <div id="cards-container" class="absolute inset-0"></div>
-        </div>
-
-        <!-- Search + Filter -->
-        <div class="absolute top-6 right-6 z-30 flex items-center space-x-2">
-            <div class="flex items-center bg-white/95 backdrop-blur-md rounded-2xl shadow-lg border border-gray-200 px-3 py-2.5">
-                <svg class="text-gray-400 mr-2 flex-shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                <input id="searchInput" type="text" placeholder="Search board..." oninput="applySearch(this.value)" class="text-xs font-semibold text-gray-800 placeholder-gray-400 focus:outline-none w-28 md:w-36 bg-transparent">
-            </div>
-            <div class="relative">
-                <button onclick="toggleFilterMenu()" class="bg-white/95 backdrop-blur-md px-4 py-2.5 rounded-2xl shadow-lg border border-gray-200 text-gray-800 font-bold text-xs flex items-center hover:bg-gray-50 transition">
-                    <svg class="mr-2" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg> Filters <svg class="ml-2" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-                </button>
-                <div id="filterDropdown" class="hidden absolute top-full right-0 mt-2 bg-white border border-gray-200 shadow-xl rounded-2xl p-4 w-48 space-y-2">
-                    <label class="flex items-center space-x-2 text-xs font-semibold text-gray-700 cursor-pointer"><input type="checkbox" checked onchange="updateFilters('link', this.checked)" class="rounded border-gray-300 text-black"> <span>Web Links</span></label>
-                    <label class="flex items-center space-x-2 text-xs font-semibold text-gray-700 cursor-pointer"><input type="checkbox" checked onchange="updateFilters('note', this.checked)" class="rounded border-gray-300 text-black"> <span>Notes</span></label>
-                    <label class="flex items-center space-x-2 text-xs font-semibold text-gray-700 cursor-pointer"><input type="checkbox" checked onchange="updateFilters('text', this.checked)" class="rounded border-gray-300 text-black"> <span>Plain Text</span></label>
-                    <label class="flex items-center space-x-2 text-xs font-semibold text-gray-700 cursor-pointer"><input type="checkbox" checked onchange="updateFilters('image', this.checked)" class="rounded border-gray-300 text-black"> <span>Images</span></label>
-                    <label class="flex items-center space-x-2 text-xs font-semibold text-gray-700 cursor-pointer"><input type="checkbox" checked onchange="updateFilters('comment', this.checked)" class="rounded border-gray-300 text-black"> <span>Comments</span></label>
-                    <label class="flex items-center space-x-2 text-xs font-semibold text-gray-700 cursor-pointer"><input type="checkbox" checked onchange="updateFilters('checklist', this.checked)" class="rounded border-gray-300 text-black"> <span>Checklists</span></label>
-                    <label class="flex items-center space-x-2 text-xs font-semibold text-gray-700 cursor-pointer"><input type="checkbox" checked onchange="updateFilters('source', this.checked)" class="rounded border-gray-300 text-black"> <span>Research Sources</span></label>
-                    <label class="flex items-center space-x-2 text-xs font-semibold text-gray-700 cursor-pointer"><input type="checkbox" checked onchange="updateFilters('grid', this.checked)" class="rounded border-gray-300 text-black"> <span>Grids</span></label>
-                    <label class="flex items-center space-x-2 text-xs font-semibold text-gray-700 cursor-pointer"><input type="checkbox" checked onchange="updateFilters('shape', this.checked)" class="rounded border-gray-300 text-black"> <span>Shapes</span></label>
-                    <label class="flex items-center space-x-2 text-xs font-semibold text-gray-700 cursor-pointer"><input type="checkbox" checked onchange="updateFilters('sketches', this.checked)" class="rounded border-gray-300 text-black"> <span>Sketches</span></label>
-                </div>
-            </div>
-        </div>
-
-        <!-- History + Zoom Controls -->
-        <div class="absolute bottom-6 right-6 z-30 flex items-center space-x-1 bg-white/95 backdrop-blur-md p-1.5 rounded-full shadow-xl border border-gray-200 text-gray-800">
-            <button id="undo-btn" onclick="undo()" disabled title="Undo (Ctrl+Z)" class="w-9 h-9 rounded-full hover:bg-gray-100 flex items-center justify-center transition active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg></button>
-            <button id="redo-btn" onclick="redo()" disabled title="Redo (Ctrl+Shift+Z)" class="w-9 h-9 rounded-full hover:bg-gray-100 flex items-center justify-center transition active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13"/></svg></button>
-            <div class="w-px h-5 bg-gray-200 my-auto mx-0.5"></div>
-            <button onclick="zoomCanvas(0.1)" title="Zoom In" class="w-9 h-9 rounded-full hover:bg-gray-100 flex items-center justify-center transition active:scale-95 text-sm font-bold"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
-            <span id="zoomDisplay" class="text-xs font-bold px-2 min-w-[50px] text-center select-none text-gray-700">100%</span>
-            <button onclick="zoomCanvas(-0.1)" title="Zoom Out" class="w-9 h-9 rounded-full hover:bg-gray-100 flex items-center justify-center transition active:scale-95 text-sm font-bold"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/></svg></button>
-            <div class="w-px h-5 bg-gray-200 my-auto mx-0.5"></div>
-            <button id="btn-snap" onclick="toggleSnapPopover(event)" title="Snap & Alignment" class="w-9 h-9 rounded-full hover:bg-gray-100 flex items-center justify-center transition active:scale-95"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 15-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 22l-4-4 6.39-6.36a2.14 2.14 0 0 0-3-3L6 15"/><path d="m5 8 4 4"/><path d="m12 15 4 4"/></svg></button>
-            <div class="w-px h-5 bg-gray-200 my-auto mx-1"></div>
-            <button onclick="zoomToFit()" title="Fit to Content" class="w-9 h-9 rounded-full hover:bg-gray-100 flex items-center justify-center transition active:scale-95 text-xs font-semibold"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
-            <button onclick="resetZoom()" title="Reset Zoom" class="w-9 h-9 rounded-full hover:bg-gray-100 flex items-center justify-center transition active:scale-95 text-xs font-semibold"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
-        </div>
-    </div>
-
-    <!-- Context Menu for Connections -->
-    <div id="connContextMenu" class="fixed hidden bg-white border border-gray-200 shadow-xl rounded-xl py-1 z-50 text-xs min-w-[150px]">
-        <button onclick="editTargetConnectionLabel()" class="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-gray-700 font-bold transition flex items-center border-b border-gray-100">
-            <svg class="mr-2.5" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>Edit Label
-        </button>
-        <button onclick="deleteTargetConnection()" class="w-full text-left px-4 py-2.5 hover:bg-rose-50 text-rose-600 font-bold transition flex items-center">
-            <svg class="mr-2.5" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>Delete Line
-        </button>
-    </div>
-
-    <!-- Admin PIN Modal -->
-    <div id="adminPinModal" class="fixed inset-0 bg-gray-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
-        <div class="bg-white rounded-3xl shadow-2xl border border-gray-100 max-w-sm w-full p-6 text-center">
-            <div class="w-12 h-12 bg-gray-100 text-black rounded-2xl flex items-center justify-center mx-auto mb-3 text-xl font-bold">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            </div>
-            <h3 class="font-bold text-gray-900 text-base mb-1">Admin Settings</h3>
-            <p class="text-xs text-gray-500 mb-4">Enter 4-digit PIN (Default: 0000)</p>
-            <input type="password" id="adminPinInput" maxlength="4" placeholder="••••" class="w-36 mx-auto text-center text-xl tracking-widest p-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:border-black font-mono mb-3">
-            <p id="pinErrorMsg" class="text-xs text-rose-500 hidden mb-3 font-semibold"></p>
-            <div class="flex space-x-2">
-                <button onclick="closeAdminPinModal()" class="w-1/2 py-2.5 px-4 bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-bold rounded-xl transition">Cancel</button>
-                <button onclick="verifyAdminPin()" class="w-1/2 py-2.5 px-4 bg-black hover:bg-gray-800 text-white text-xs font-bold rounded-xl transition shadow">Verify</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Admin Panel Modal -->
-    <div id="adminPanelModal" class="fixed inset-0 bg-gray-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
-        <div class="bg-white rounded-3xl shadow-2xl border border-gray-100 max-w-md w-full p-6">
-            <div class="flex justify-between items-center pb-4 border-b border-gray-100 mb-4">
-                <h3 class="font-bold text-gray-900 text-base flex items-center">
-                    <svg class="text-black mr-2" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg>Workspace Settings
-                </h3>
-                <button onclick="closeAdminPanelModal()" class="text-gray-400 hover:text-black w-8 h-8 rounded-full flex items-center justify-center hover:bg-gray-100">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-                </button>
-            </div>
-            <div class="space-y-4">
-                <div class="p-4 bg-rose-50/60 border border-rose-100 rounded-2xl flex items-center justify-between">
-                    <div>
-                        <h4 class="text-xs font-bold text-rose-900">Clear Entire Board</h4>
-                        <p class="text-[11px] text-rose-700">Deletes all elements and sketches.</p>
-                    </div>
-                    <button onclick="promptClearBoardConfirm()" class="py-2 px-3 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition shadow">Clear All</button>
-                </div>
-                <div class="p-4 bg-gray-50 border border-gray-200 rounded-2xl space-y-2">
-                    <h4 class="text-xs font-bold text-gray-800">Data Management</h4>
-                    <div class="flex space-x-2">
-                        <button onclick="exportBoardJSON()" class="w-1/2 py-2 px-3 bg-white border border-gray-200 hover:bg-gray-100 text-gray-800 text-xs font-bold rounded-xl transition flex justify-center items-center">
-                            <svg class="mr-1.5" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg> Export
-                        </button>
-                        <button onclick="triggerImportJSON()" class="w-1/2 py-2 px-3 bg-white border border-gray-200 hover:bg-gray-100 text-gray-800 text-xs font-bold rounded-xl transition flex justify-center items-center">
-                            <svg class="mr-1.5" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg> Import
-                        </button>
-                    </div>
-                    <button onclick="exportBoardPNG()" class="w-full py-2 px-3 bg-white border border-gray-200 hover:bg-gray-100 text-gray-800 text-xs font-bold rounded-xl transition flex justify-center items-center">
-                        <svg class="mr-1.5" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg> Export as PNG Image
-                    </button>
-                    <input type="file" id="importJsonInput" accept=".json" class="hidden" onchange="importBoardJSON(event)">
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Delete Confirm Modal -->
-    <div id="deleteConfirmModal" class="fixed inset-0 bg-gray-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
-        <div class="bg-white rounded-3xl shadow-2xl border border-gray-100 max-w-xs w-full p-5 text-center">
-            <div class="w-10 h-10 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center mx-auto mb-2 text-lg">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-            </div>
-            <h3 class="font-bold text-gray-900 text-sm mb-1">Delete Element?</h3>
-            <p id="deleteConfirmMsg" class="text-xs text-gray-500 mb-4">This action cannot be undone.</p>
-            <div class="flex space-x-2">
-                <button onclick="closeDeleteConfirmModal()" class="w-1/2 py-2.5 px-4 bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-bold rounded-xl transition">Cancel</button>
-                <button id="confirmDeleteBtn" class="w-1/2 py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition shadow">Delete</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Floating Text Format Toolbar -->
-    <div id="text-format-toolbar" class="fixed hidden bg-white/95 backdrop-blur shadow-2xl border border-gray-200 rounded-xl flex items-center z-[100] px-2 py-1.5 space-x-1" onmousedown="event.stopPropagation();">
-        <button onmousedown="event.preventDefault(); formatText('bold')" class="w-7 h-7 flex items-center justify-center hover:bg-gray-100 rounded text-gray-700 transition" title="Bold"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6Z"/><path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6Z"/></svg></button>
-        <button onmousedown="event.preventDefault(); formatText('italic')" class="w-7 h-7 flex items-center justify-center hover:bg-gray-100 rounded text-gray-700 transition" title="Italic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/></svg></button>
-        <button onmousedown="event.preventDefault(); formatText('underline')" class="w-7 h-7 flex items-center justify-center hover:bg-gray-100 rounded text-gray-700 transition" title="Underline"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4v6a6 6 0 0 0 12 0V4"/><line x1="4" x2="20" y1="20" y2="20"/></svg></button>
-        <button onmousedown="event.preventDefault(); formatText('strikeThrough')" class="w-7 h-7 flex items-center justify-center hover:bg-gray-100 rounded text-gray-700 transition" title="Strikethrough"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><line x1="4" x2="20" y1="12" y2="12"/></svg></button>
-        <div class="w-px h-4 bg-gray-300 mx-1"></div>
-        <button onmousedown="event.preventDefault(); formatText('justifyLeft')" class="w-7 h-7 flex items-center justify-center hover:bg-gray-100 rounded text-gray-700 transition" title="Align Left"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" x2="3" y1="6" y2="6"/><line x1="15" x2="3" y1="12" y2="12"/><line x1="17" x2="3" y1="18" y2="18"/></svg></button>
-        <button onmousedown="event.preventDefault(); formatText('justifyCenter')" class="w-7 h-7 flex items-center justify-center hover:bg-gray-100 rounded text-gray-700 transition" title="Align Center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" x2="3" y1="6" y2="6"/><line x1="17" x2="7" y1="12" y2="12"/><line x1="19" x2="5" y1="18" y2="18"/></svg></button>
-        <button onmousedown="event.preventDefault(); formatText('justifyRight')" class="w-7 h-7 flex items-center justify-center hover:bg-gray-100 rounded text-gray-700 transition" title="Align Right"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" x2="3" y1="6" y2="6"/><line x1="21" x2="9" y1="12" y2="12"/><line x1="21" x2="7" y1="18" y2="18"/></svg></button>
-        <div class="w-px h-4 bg-gray-300 mx-1"></div>
-        <button onmousedown="event.preventDefault(); formatText('insertUnorderedList')" class="w-7 h-7 flex items-center justify-center hover:bg-gray-100 rounded text-gray-700 transition" title="Bullet List"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg></button>
-        <button onmousedown="event.preventDefault(); formatText('insertOrderedList')" class="w-7 h-7 flex items-center justify-center hover:bg-gray-100 rounded text-gray-700 transition" title="Numbered List"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="10" x2="21" y1="6" y2="6"/><line x1="10" x2="21" y1="12" y2="12"/><line x1="10" x2="21" y1="18" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg></button>
-        <div class="w-px h-4 bg-gray-300 mx-1"></div>
-        <div class="relative group w-7 h-7 flex items-center justify-center hover:bg-gray-100 rounded text-gray-700 transition" title="Text Color">
-            <input type="color" oninput="formatText('foreColor', this.value)" class="absolute inset-0 opacity-0 w-full h-full cursor-pointer z-10" value="#000000">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/></svg>
-        </div>
-        <div class="relative group w-7 h-7 flex items-center justify-center hover:bg-gray-100 rounded text-gray-700 transition" title="Highlight Color">
-            <input type="color" oninput="formatText('hiliteColor', this.value)" class="absolute inset-0 opacity-0 w-full h-full cursor-pointer z-10" value="#ffff00">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4a2 2 0 0 1 2.8 0l5.2 5.2a2 2 0 0 1 0 2.8Z"/></svg>
-        </div>
-        <div class="w-px h-4 bg-gray-300 mx-1"></div>
-        <button onmousedown="event.preventDefault(); formatText('removeFormat')" class="w-7 h-7 flex items-center justify-center hover:bg-rose-50 hover:text-rose-600 rounded text-gray-700 transition" title="Clear Formatting"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg></button>
-    </div>
-
-    <script>
-        // =========================================================================
-        // FIREBASE REALTIME DATABASE CONFIGURATION
-        // =========================================================================
-        const firebaseConfig = {
-            apiKey: "AIzaSyADVaefaXCa4uUT8SivVYTq8GimffTqV9I",
-            authDomain: "office-canvas.firebaseapp.com",
-            databaseURL: "https://office-canvas-default-rtdb.europe-west1.firebasedatabase.app",
-            projectId: "office-canvas",
-            storageBucket: "office-canvas.firebasestorage.app",
-            messagingSenderId: "650969840831",
-            appId: "1:650969840831:web:e4e8c56e38ca5249761a0a",
-            measurementId: "G-0QMQGZ9BXP"
-        };
-
-        // Shared default board for all users
-        const SHARED_BOARD_ID = 'shared-main-board';
-
-        let db = null;
-        let isFirebaseAvailable = false;
-        let saveDebounceTimer = null;
-        let isRemoteUpdate = false;
-        let currentBoardRef = null;
-
-        function setSyncStatus(status, text) {
-            const dot = document.getElementById('syncDot');
-            const label = document.getElementById('syncText');
-            if (!dot || !label) return;
-            label.textContent = text;
-            if (status === 'synced') {
-                dot.className = 'w-2 h-2 rounded-full bg-emerald-500';
-            } else if (status === 'syncing') {
-                dot.className = 'w-2 h-2 rounded-full bg-amber-400 animate-pulse';
-            } else if (status === 'offline') {
-                dot.className = 'w-2 h-2 rounded-full bg-rose-500';
-            }
-        }
-
-        // Helper to convert Firebase dictionary objects back to clean arrays
-        function ensureArray(val) {
-            if (!val) return [];
-            if (Array.isArray(val)) return val.filter(Boolean);
-            if (typeof val === 'object') return Object.values(val).filter(Boolean);
-            return [];
-        }
-
-        function initFirebase() {
-            try {
-                firebase.initializeApp(firebaseConfig);
-                db = firebase.database();
-                isFirebaseAvailable = true;
-                setSyncStatus('synced', 'Live Synced');
-            } catch (err) {
-                console.error("Firebase init failed:", err);
-                setSyncStatus('offline', 'Offline');
-            }
-        }
-
-        // ===================== State =====================
-        let cards = [];
-        let connections = [];
-        let sketches = [];
-
-        let filters = { link: true, note: true, text: true, image: true, comment: true, checklist: true, grid: true, shape: true, sketches: true, source: true };
-
-        let activeTool = 'select';
-        let currentPenColor = '#2563eb';
-        let currentPenWidth = 6;
-        let isDrawing = false;
-        let currentPathPoints = [];
-        let tempSketchPath = null;
-
-        let scale = 1.0;
-        let panX = -3500;
-        let panY = -3500;
-        let isPanning = false;
-        let startX = 0, startY = 0;
-        let isPinching = false;
-        let pinchStartDist = 0;
-        let pinchStartScale = 1;
-        let wasPanningBeforePinch = false;
-
-        let activePort = null;
-        let tempPath = null;
-        let targetConnId = null;
-
-        let isResizing = false;
-        let resizingCardId = null;
-        let resizeStartW = 0;
-        let resizeStartH = 0;
-        let resizeHistoryPushed = false;
-
-        let matrixR = 1, matrixC = 1;
-        let clipboardCards = null;
-        let pasteOffset = 0;
-        let activeSnapInfo = null;
-
-        let selectedIds = new Set();
-        let targetDeleteIds = [];
-
-        let isMarquee = false;
-        let marqueeStartX = 0, marqueeStartY = 0;
-        let marqueeEl = null;
-
-        let historyStack = [];
-        let redoStack = [];
-        const MAX_HISTORY = 60;
-        let editSnapshotBeforeChange = null;
-        let editSnapshotOriginalValue = null;
-
-        let snapToGridEnabled = false;
-        let snapGridSize = 20;
-        let orthoRestrictionEnabled = false;
-
-        let searchQuery = '';
-        let colorPickerTargetId = null;
-        const COLOR_SWATCHES = ['#fef3c7','#dbeafe','#dcfce7','#fce7f3','#e0e7ff','#f3e8ff','#ffedd5','#f3f4f6','#ffffff','#fecaca','#bbf7d0','#bfdbfe'];
-
-        const BOARDS_INDEX_KEY = 'canvas_boards_index_v1';
-        let boardsIndex = [];
-        let currentBoardId = SHARED_BOARD_ID;
-
-        const viewport = document.getElementById('viewport');
-        const plane = document.getElementById('canvas-plane');
-        const cardsContainer = document.getElementById('cards-container');
-        const svgLayer = document.getElementById('svg-layer');
-        const sketchesGroup = document.getElementById('sketches-group');
-        const connectionsGroup = document.getElementById('connections-group');
-
-        window.addEventListener('load', () => {
-            initFirebase();
-            loadBoardsIndex();
-            loadFromStorage();
-            updateTransform();
-            renderBoard();
-            setupViewportEvents();
-            setupGridMatrix();
-            setupDragAndDrop();
-            updateBoardLabel();
-            updateHistoryButtons();
-            updateSnapUI();
-            listenToCurrentBoard();
-            listenToBoardsIndex();
-        });
-
-        window.addEventListener('click', (e) => {
-            if (!e.target.closest('.popover-menu') && !e.target.closest('.dock-btn')) closePopovers();
-            if (!e.target.closest('#boardSwitcherRoot')) closeBoardMenu();
-        });
-
-        function closePopovers() {
-            document.querySelectorAll('.popover-menu').forEach(el => el.classList.add('hidden'));
-        }
-
-        function toggleCustomPopover(id, event) {
-            if (event) event.stopPropagation();
-            const popover = document.getElementById(id);
-            if (!popover) return;
-            const isHidden = popover.classList.contains('hidden');
-            closePopovers();
-            if (isHidden) {
-                const button = event.currentTarget;
-                const rect = button.getBoundingClientRect();
-                popover.style.left = `${rect.right + 16}px`;
-                popover.style.top = `${Math.min(rect.top, window.innerHeight - 250)}px`;
-                popover.classList.remove('hidden');
-            }
-        }
-
-        function escapeHtml(str) {
-            const div = document.createElement('div');
-            div.textContent = str == null ? '' : str;
-            return div.innerHTML;
-        }
-
-        function getStorageKeyForBoard(id) { return `canvas_board_data_${id}`; }
-
-        function loadBoardsIndex() {
-            currentBoardId = SHARED_BOARD_ID;
-            boardsIndex = [{ id: SHARED_BOARD_ID, name: 'Shared Office Canvas' }];
-        }
-
-        function listenToBoardsIndex() {
-            if (!isFirebaseAvailable || !db) return;
-            db.ref('boardsIndex').on('value', snapshot => {
-                const val = snapshot.val();
-                if (val && Array.isArray(val) && val.length > 0) {
-                    boardsIndex = val;
-                    if (!boardsIndex.find(b => b.id === currentBoardId)) {
-                        currentBoardId = boardsIndex[0].id;
-                        listenToCurrentBoard();
-                    }
-                    updateBoardLabel();
-                    renderBoardList();
-                } else {
-                    saveBoardsIndex();
-                }
-            });
-        }
-
-        function saveBoardsIndex() {
-            if (isFirebaseAvailable && db) {
-                db.ref('boardsIndex').set(boardsIndex).catch(console.error);
-            }
-        }
-
-        function switchBoard(id) {
-            if (id === currentBoardId) { closeBoardMenu(); return; }
-            currentBoardId = id;
-            clearSelection();
-            historyStack = []; redoStack = [];
-            updateHistoryButtons();
-            loadFromStorage();
-            renderBoard();
-            updateBoardLabel();
-            closeBoardMenu();
-            listenToCurrentBoard();
-            const si = document.getElementById('searchInput');
-            if (si) si.value = '';
-            resetZoom();
-        }
-
-        function createNewBoard() {
-            const input = document.getElementById('newBoardNameInput');
-            const name = (input.value || '').trim() || `Board ${boardsIndex.length + 1}`;
-            const id = 'board-' + Date.now();
-            boardsIndex.push({ id, name });
-            saveBoardsIndex();
-            input.value = '';
-            switchBoard(id);
-            renderBoardList();
-        }
-
-        function renameBoard(id, event) {
-            event.stopPropagation();
-            const board = boardsIndex.find(b => b.id === id);
-            if (!board) return;
-            const newName = prompt('Rename board:', board.name);
-            if (newName === null || !newName.trim()) return;
-            board.name = newName.trim();
-            saveBoardsIndex();
-            renderBoardList();
-            updateBoardLabel();
-        }
-
-        function deleteBoard(id, event) {
-            event.stopPropagation();
-            if (boardsIndex.length <= 1) { alert("Can't delete the main shared board."); return; }
-            if (!confirm('Delete this board for all users?')) return;
-            boardsIndex = boardsIndex.filter(b => b.id !== id);
-            saveBoardsIndex();
-            if (isFirebaseAvailable && db) {
-                db.ref('boards/' + id).remove().catch(console.error);
-            }
-            if (currentBoardId === id) switchBoard(boardsIndex[0].id);
-            renderBoardList();
-        }
-
-        function updateBoardLabel() {
-            const board = boardsIndex.find(b => b.id === currentBoardId);
-            const el = document.getElementById('currentBoardLabel');
-            if (el) el.textContent = board ? board.name : 'Shared Office Canvas';
-        }
-
-        function renderBoardList() {
-            const container = document.getElementById('boardListContainer');
-            if (!container) return;
-            container.innerHTML = boardsIndex.map(b => `
-                <div class="flex items-center justify-between px-2 py-2 rounded-xl hover:bg-gray-50 cursor-pointer ${b.id === currentBoardId ? 'bg-blue-50' : ''}" onclick="switchBoard('${b.id}')">
-                    <span class="text-xs font-semibold text-gray-800 truncate flex-grow">${b.id === currentBoardId ? '● ' : ''}${escapeHtml(b.name)}</span>
-                    <div class="flex items-center space-x-1 flex-shrink-0">
-                        <button onclick="renameBoard('${b.id}', event)" class="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-black rounded" title="Rename">✎</button>
-                        ${b.id !== SHARED_BOARD_ID ? `<button onclick="deleteBoard('${b.id}', event)" class="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-rose-600 rounded" title="Delete">✕</button>` : ''}
-                    </div>
-                </div>
-            `).join('');
-        }
-
-        function toggleBoardMenu(event) {
-            event.stopPropagation();
-            const menu = document.getElementById('boardMenu');
-            const isHidden = menu.classList.contains('hidden');
-            closePopovers(); closeBoardMenu();
-            if (isHidden) { renderBoardList(); menu.classList.remove('hidden'); }
-        }
-        function closeBoardMenu() { const m = document.getElementById('boardMenu'); if (m) m.classList.add('hidden'); }
-
-        // ===================== Multi-User Live Listener =====================
-        function listenToCurrentBoard() {
-            if (currentBoardRef) {
-                currentBoardRef.off();
-                currentBoardRef = null;
-            }
-            if (!isFirebaseAvailable || !db || !currentBoardId) return;
-
-            setSyncStatus('syncing', 'Syncing...');
-            currentBoardRef = db.ref('boards/' + currentBoardId);
-            currentBoardRef.on('value', snapshot => {
-                setSyncStatus('synced', 'Live Synced');
-                const data = snapshot.val();
-
-                // If remote database is empty but local has content, seed the cloud
-                if (!data && (cards.length > 0 || sketches.length > 0)) {
-                    saveToStorage();
-                    return;
-                }
-                if (!data) return;
-
-                // Do not disrupt user in the middle of active drag or drawing
-                if (isPanning || isDrawing || isResizing || activeTextElement) return;
-
-                isRemoteUpdate = true;
-                cards = ensureArray(data.cards);
-                connections = ensureArray(data.connections);
-                sketches = ensureArray(data.sketches);
-
-                try {
-                    localStorage.setItem(getStorageKeyForBoard(currentBoardId), JSON.stringify({ cards, connections, sketches }));
-                } catch (e) {}
-
-                renderBoard();
-                renderSketches();
-                isRemoteUpdate = false;
-            }, err => {
-                console.error("Firebase listen error:", err);
-                setSyncStatus('offline', 'Sync Error');
-            });
-        }
-
-        function saveToStorage() {
-            const payload = { cards, connections, sketches, updatedAt: Date.now() };
-
-            try {
-                localStorage.setItem(getStorageKeyForBoard(currentBoardId), JSON.stringify({ cards, connections, sketches }));
-            } catch (e) {}
-
-            if (isFirebaseAvailable && db && !isRemoteUpdate) {
-                setSyncStatus('syncing', 'Saving...');
-                clearTimeout(saveDebounceTimer);
-                saveDebounceTimer = setTimeout(() => {
-                    db.ref('boards/' + currentBoardId).set(payload)
-                        .then(() => setSyncStatus('synced', 'Live Synced'))
-                        .catch(err => {
-                            console.error("Firebase save error:", err);
-                            setSyncStatus('offline', 'Save Error');
-                        });
-                }, 300);
-            }
-        }
-
-        function loadFromStorage() {
-            // Attempt to load from shared board cache, or legacy board if available
-            try {
-                let stored = localStorage.getItem(getStorageKeyForBoard(currentBoardId));
-                if (!stored) {
-                    for (let i = 0; i < localStorage.length; i++) {
-                        const k = localStorage.key(i);
-                        if (k && k.startsWith('canvas_board_data_')) {
-                            stored = localStorage.getItem(k);
-                            break;
-                        }
-                    }
-                }
-                if (stored) {
-                    const parsed = JSON.parse(stored);
-                    cards = ensureArray(parsed.cards);
-                    connections = ensureArray(parsed.connections);
-                    sketches = ensureArray(parsed.sketches);
-                    return;
-                }
-            } catch (e) {}
-            cards = []; connections = []; sketches = [];
-        }
-
-        function snapshotState() { return JSON.stringify({ cards, connections, sketches }); }
-        function pushHistory() {
-            historyStack.push(snapshotState());
-            if (historyStack.length > MAX_HISTORY) historyStack.shift();
-            redoStack = [];
-            updateHistoryButtons();
-        }
-        function restoreSnapshot(json) {
-            const parsed = JSON.parse(json);
-            cards = ensureArray(parsed.cards);
-            connections = ensureArray(parsed.connections);
-            sketches = ensureArray(parsed.sketches);
-            clearSelection(); saveToStorage(); renderBoard(); renderSketches(); updateHistoryButtons();
-        }
-        function undo() {
-            if (historyStack.length === 0) return;
-            if (typeof finishEditing === 'function') finishEditing();
-            const current = snapshotState();
-            const prev = historyStack.pop();
-            redoStack.push(current);
-            restoreSnapshot(prev);
-        }
-        function redo() {
-            if (redoStack.length === 0) return;
-            if (typeof finishEditing === 'function') finishEditing();
-            const current = snapshotState();
-            const next = redoStack.pop();
-            historyStack.push(current);
-            restoreSnapshot(next);
-        }
-        function updateHistoryButtons() {
-            const undoBtn = document.getElementById('undo-btn');
-            const redoBtn = document.getElementById('redo-btn');
-            if (undoBtn) undoBtn.disabled = historyStack.length === 0;
-            if (redoBtn) redoBtn.disabled = redoStack.length === 0;
-        }
-
-        function setActiveTool(tool) {
-            activeTool = tool;
-            document.querySelectorAll('.dock-bar .dock-btn').forEach(btn => btn.classList.remove('active'));
-            viewport.classList.remove('mode-draw', 'mode-eraser');
-
-            if (tool === 'select') {
-                document.getElementById('btn-select').classList.add('active');
-                document.getElementById('sketch-sub-dock').classList.add('hidden');
-            } else if (tool === 'pen' || tool === 'highlighter' || tool === 'eraser') {
-                document.getElementById('btn-pen').classList.add('active');
-                document.getElementById('sketch-sub-dock').classList.remove('hidden');
-
-                if (tool === 'eraser') {
-                    viewport.classList.add('mode-eraser');
-                    document.getElementById('btn-pen-sub').classList.remove('active');
-                    document.getElementById('btn-highlighter-sub').classList.remove('active');
-                    document.getElementById('btn-eraser-sub').classList.add('active');
-                } else {
-                    viewport.classList.add('mode-draw');
-                    document.getElementById('btn-eraser-sub').classList.remove('active');
-                    if (tool === 'pen') {
-                        document.getElementById('btn-pen-sub').classList.add('active');
-                        document.getElementById('btn-highlighter-sub').classList.remove('active');
-                    } else {
-                        document.getElementById('btn-highlighter-sub').classList.add('active');
-                        document.getElementById('btn-pen-sub').classList.remove('active');
-                    }
-                }
-            }
-            if (typeof renderSketches === 'function') renderSketches();
-        }
-
-        function togglePenMode() {
-            if (activeTool === 'pen' || activeTool === 'highlighter' || activeTool === 'eraser') setActiveTool('select');
-            else setActiveTool('pen');
-        }
-
-        function setSketchType(type) { setActiveTool(type); }
-        function setPenColor(color) { currentPenColor = color; if (activeTool === 'eraser') setActiveTool('pen'); }
-        function setPenWidth(w) {
-            currentPenWidth = w;
-            [3, 6, 12].forEach(val => {
-                const btn = document.getElementById(`sw-${val}`);
-                if (btn) btn.classList.toggle('border-blue-500', val === w);
-            });
-            if (activeTool === 'eraser') setActiveTool('pen');
-        }
-
-        function toggleSnapPopover(event) {
-            event.stopPropagation();
-            const popover = document.getElementById('snap-popover');
-            const isHidden = popover.classList.contains('hidden');
-            closePopovers();
-            if (isHidden) {
-                const rect = event.currentTarget.getBoundingClientRect();
-                popover.style.right = `${window.innerWidth - rect.right}px`;
-                popover.style.bottom = `${window.innerHeight - rect.top + 10}px`;
-                popover.classList.remove('hidden');
-            }
-        }
-        function toggleSnapGrid() { snapToGridEnabled = !snapToGridEnabled; updateSnapUI(); }
-        function setSnapGridSize(size) { snapGridSize = size; if (!snapToGridEnabled) snapToGridEnabled = true; updateSnapUI(); }
-        function toggleOrtho() { orthoRestrictionEnabled = !orthoRestrictionEnabled; updateSnapUI(); }
-
-        function updateSnapUI() {
-            const snapBtn = document.getElementById('snapToggleBtn');
-            const orthoBtn = document.getElementById('orthoToggleBtn');
-            const mainBtn = document.getElementById('btn-snap');
-            if (snapBtn) {
-                snapBtn.classList.toggle('bg-blue-600', snapToGridEnabled);
-                snapBtn.classList.toggle('bg-gray-200', !snapToGridEnabled);
-                const knob = snapBtn.querySelector('span');
-                if (knob) knob.style.transform = snapToGridEnabled ? 'translateX(16px)' : 'translateX(0)';
-            }
-            if (orthoBtn) {
-                orthoBtn.classList.toggle('bg-blue-600', orthoRestrictionEnabled);
-                orthoBtn.classList.toggle('bg-gray-200', !orthoRestrictionEnabled);
-                const knob = orthoBtn.querySelector('span');
-                if (knob) knob.style.transform = orthoRestrictionEnabled ? 'translateX(16px)' : 'translateX(0)';
-            }
-            document.querySelectorAll('.snap-size-btn').forEach(btn => {
-                const isActive = snapToGridEnabled && parseInt(btn.dataset.size) === snapGridSize;
-                btn.classList.toggle('bg-black', isActive);
-                btn.classList.toggle('text-white', isActive);
-            });
-            if (mainBtn) {
-                const active = snapToGridEnabled || orthoRestrictionEnabled;
-                mainBtn.classList.toggle('text-blue-600', active);
-                mainBtn.classList.toggle('bg-blue-50', active);
-            }
-        }
-
-        function clearAllSketches() {
-            pushHistory(); sketches = []; saveToStorage(); renderSketches();
-        }
-
-        function generateSvgPathD(points) {
-            if (!points || points.length < 2) return '';
-            let d = `M ${points[0].x} ${points[0].y}`;
-            for (let i = 1; i < points.length - 1; i++) {
-                const xc = (points[i].x + points[i + 1].x) / 2;
-                const yc = (points[i].y + points[i + 1].y) / 2;
-                d += ` Q ${points[i].x} ${points[i].y}, ${xc} ${yc}`;
-            }
-            if (points.length > 1) d += ` L ${points[points.length - 1].x} ${points[points.length - 1].y}`;
-            return d;
-        }
-
-        function renderSketches() {
-            sketchesGroup.innerHTML = '';
-            if (!filters.sketches) return;
-            sketches.forEach(s => {
-                if (!s || !s.d) return;
-                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-                path.setAttribute('d', s.d);
-                path.setAttribute('stroke', s.color || '#2563eb');
-                path.setAttribute('stroke-width', s.width || 6);
-                path.setAttribute('fill', 'none');
-                path.setAttribute('stroke-linecap', 'round');
-                path.setAttribute('stroke-linejoin', 'round');
-                if (s.type === 'highlighter') path.setAttribute('stroke-opacity', '0.4');
-                path.classList.add('sketch-path');
-
-                if (activeTool === 'eraser') {
-                    path.classList.add('erasable');
-                    path.style.pointerEvents = 'stroke';
-                    path.onclick = (e) => {
-                        e.stopPropagation();
-                        pushHistory();
-                        sketches = sketches.filter(item => item && item.id !== s.id);
-                        saveToStorage();
-                        renderSketches();
-                    };
-                } else {
-                    path.style.pointerEvents = 'none';
-                }
-                sketchesGroup.appendChild(path);
-            });
-        }
-
-        function getCanvasCenter() {
-            const rect = viewport.getBoundingClientRect();
-            return {
-                x: Math.round((rect.width / 2 - panX) / scale - 120),
-                y: Math.round((rect.height / 2 - panY) / scale - 80)
-            };
-        }
-
-        function refreshSelectionUI() {
-            document.querySelectorAll('.canvas-card.selected-card').forEach(el => el.classList.remove('selected-card'));
-            selectedIds.forEach(id => {
-                const el = document.getElementById(`card-${id}`);
-                if (el) el.classList.add('selected-card');
-            });
-        }
-        function setSelection(ids) { selectedIds = new Set(ids); refreshSelectionUI(); }
-        function toggleInSelection(id) { if (selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id); refreshSelectionUI(); }
-        function clearSelection() { selectedIds.clear(); refreshSelectionUI(); }
-
-        function copySelection() {
-            if (selectedIds.size === 0) return;
-            clipboardCards = cards.filter(c => selectedIds.has(c.id)).map(c => JSON.parse(JSON.stringify(c)));
-            pasteOffset = 0;
-        }
-
-        function pasteClipboard() {
-            if (!clipboardCards || !clipboardCards.length) return;
-            pushHistory();
-            pasteOffset += 24;
-            const newIds = [];
-            clipboardCards.forEach(orig => {
-                const clone = JSON.parse(JSON.stringify(orig));
-                clone.id = Date.now().toString() + Math.random().toString(36).slice(2, 6);
-                clone.x = orig.x + pasteOffset; clone.y = orig.y + pasteOffset;
-                clone.gridId = null; clone.gridRow = null; clone.gridCol = null;
-                newIds.push(clone.id);
-                cards.push(clone);
-            });
-            saveToStorage(); renderBoard(); setSelection(newIds);
-        }
-
-        function duplicateSelection() {
-            if (selectedIds.size === 0) return;
-            pushHistory();
-            const newIds = [];
-            cards.filter(c => selectedIds.has(c.id)).forEach(orig => {
-                const clone = JSON.parse(JSON.stringify(orig));
-                clone.id = Date.now().toString() + Math.random().toString(36).slice(2, 6);
-                clone.x = orig.x + 24; clone.y = orig.y + 24;
-                clone.gridId = null; clone.gridRow = null; clone.gridCol = null;
-                newIds.push(clone.id);
-                cards.push(clone);
-            });
-            saveToStorage(); renderBoard(); setSelection(newIds);
-        }
-
-        function nudgeSelection(key, step) {
-            let dx = 0, dy = 0;
-            if (key === 'arrowup') dy = -step;
-            else if (key === 'arrowdown') dy = step;
-            else if (key === 'arrowleft') dx = -step;
-            else if (key === 'arrowright') dx = step;
-
-            selectedIds.forEach(id => {
-                const card = cards.find(c => c.id === id);
-                if (!card) return;
-                card.x += dx; card.y += dy;
-                const el = document.getElementById(`card-${id}`);
-                if (el) { el.style.left = card.x + 'px'; el.style.top = card.y + 'px'; }
-            });
-            renderConnections(); saveToStorage();
-        }
-
-        document.addEventListener('keydown', (e) => {
-            const tag = (e.target.tagName || '').toLowerCase();
-            if (e.target.isContentEditable || tag === 'input' || tag === 'textarea') return;
-            const ctrlOrCmd = e.ctrlKey || e.metaKey;
-            const key = e.key.toLowerCase();
-
-            if (ctrlOrCmd) {
-                if (key === 'c') { copySelection(); return; }
-                if (key === 'v' && clipboardCards && clipboardCards.length) { e.preventDefault(); pasteClipboard(); return; }
-                if (key === 'd') { e.preventDefault(); duplicateSelection(); return; }
-                if (key === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
-                if (key === 'y') { e.preventDefault(); redo(); return; }
-                return;
-            }
-            if (key === 'delete' || key === 'backspace') {
-                if (selectedIds.size > 0) { e.preventDefault(); promptDeleteSelection(); }
-                return;
-            }
-            if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
-                if (selectedIds.size === 0) return;
-                e.preventDefault();
-                const step = e.shiftKey ? 10 : 1;
-                if (!e.repeat) pushHistory();
-                nudgeSelection(key, step);
-            }
-        });
-
-        function addCardDirectly(type) {
-            setActiveTool('select');
-            pushHistory();
-            const pos = getCanvasCenter();
-            const newCard = { id: Date.now().toString(), type, x: pos.x, y: pos.y };
-
-            if (type === 'link') { newCard.width = 290; newCard.height = 240; newCard.pending = true; }
-            else if (type === 'note') { newCard.width = 250; newCard.height = 180; newCard.title = "Note"; newCard.content = "Click to edit text..."; }
-            else if (type === 'text') { newCard.width = 180; newCard.height = 48; newCard.content = "Enter plain text here..."; }
-            else if (type === 'image') { newCard.width = 300; newCard.height = 220; newCard.pending = true; }
-            else if (type === 'comment') { newCard.width = 260; newCard.height = 160; newCard.title = "Feedback"; newCard.content = "Add your comments here..."; }
-            else if (type === 'checklist') { newCard.width = 270; newCard.height = 220; newCard.title = "Task List"; newCard.items = []; }
-            else if (type === 'source') { newCard.width = 280; newCard.height = 230; newCard.title = "Untitled Source"; newCard.url = ''; newCard.status = 'review'; newCard.tags = []; newCard.content = "Add your notes on this source..."; }
-
-            cards.push(newCard);
-            saveToStorage(); renderBoard(); setSelection([newCard.id]);
-        }
-
-        function addGridDirectly() {
-            setActiveTool('select');
-            pushHistory();
-            const pos = getCanvasCenter();
-            cards.push({
-                id: Date.now().toString(), type: 'grid', x: pos.x, y: pos.y,
-                width: 450, height: 350, rows: matrixR || 1, cols: matrixC || 1, title: "Grid Container"
-            });
-            saveToStorage(); renderBoard(); closePopovers();
-        }
-
-        function addShapeDirectly(shapeType) {
-            setActiveTool('select');
-            pushHistory();
-            const pos = getCanvasCenter();
-            cards.push({
-                id: Date.now().toString(), type: 'shape', x: pos.x, y: pos.y,
-                width: 120, height: 120, shapeType: shapeType || 'rect'
-            });
-            saveToStorage(); renderBoard(); closePopovers();
-        }
-
-        function toggleFilterMenu() { document.getElementById('filterDropdown').classList.toggle('hidden'); }
-        function updateFilters(type, isChecked) { filters[type] = isChecked; applyFilters(); }
-        function applyFilters() {
-            cards.forEach(c => {
-                const el = document.getElementById(`card-${c.id}`);
-                if (el) el.style.display = filters[c.type] ? 'flex' : 'none';
-            });
-            renderConnections(); renderSketches();
-        }
-
-        function updateTransform() {
-            plane.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
-            document.getElementById('zoomDisplay').textContent = Math.round(scale * 100) + '%';
-        }
-
-        function zoomAtPoint(newScale, clientX, clientY) {
-            newScale = Math.min(Math.max(0.15, newScale), 3.0);
-            const rect = viewport.getBoundingClientRect();
-            const cx = (clientX !== undefined) ? clientX - rect.left : rect.width / 2;
-            const cy = (clientY !== undefined) ? clientY - rect.top : rect.height / 2;
-            panX = cx - (cx - panX) * (newScale / scale);
-            panY = cy - (cy - panY) * (newScale / scale);
-            scale = newScale;
-            updateTransform();
-        }
-
         function zoomCanvas(delta, clientX, clientY) {
             if (typeof finishEditing === 'function') finishEditing();
             zoomAtPoint(scale + delta, clientX, clientY);
         }
+
+        function resetZoom() {
+            scale = 1.0;
+            panX = -3500;
+            panY = -3500;
+            updateTransform();
+        }
+
+        function zoomToFit() {
+            if (!cards.length && !sketches.length) { resetZoom(); return; }
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            cards.forEach(c => {
+                minX = Math.min(minX, c.x);
+                minY = Math.min(minY, c.y);
+                maxX = Math.max(maxX, c.x + (c.width || 200));
+                maxY = Math.max(maxY, c.y + (c.height || 150));
+            });
+            if (minX === Infinity) { resetZoom(); return; }
+            const rect = viewport.getBoundingClientRect();
+            const padding = 100;
+            const w = maxX - minX + padding * 2;
+            const h = maxY - minY + padding * 2;
+            const fitScale = Math.min(Math.max(0.2, Math.min(rect.width / w, rect.height / h)), 1.5);
+            scale = fitScale;
+            panX = rect.width / 2 - (minX + maxX) / 2 * scale;
+            panY = rect.height / 2 - (minY + maxY) / 2 * scale;
+            updateTransform();
+        }
+
+        // ===================== Grid Matrix Picker =====================
+        function setupGridMatrix() {
+            const matrix = document.getElementById('grid-matrix');
+            if (!matrix) return;
+            matrix.innerHTML = '';
+            for (let r = 1; r <= 6; r++) {
+                for (let c = 1; c <= 8; c++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'matrix-cell w-5 h-5 border border-gray-200 rounded-sm hover:border-blue-500 cursor-pointer transition';
+                    cell.dataset.r = r;
+                    cell.dataset.c = c;
+                    cell.onmouseenter = () => highlightMatrix(r, c);
+                    cell.onclick = () => { matrixR = r; matrixC = c; addGridDirectly(); };
+                    matrix.appendChild(cell);
+                }
+            }
+        }
+
+        function highlightMatrix(maxR, maxC) {
+            matrixR = maxR; matrixC = maxC;
+            const label = document.getElementById('grid-matrix-label');
+            if (label) label.textContent = `${maxR} x ${maxC} Table`;
+            document.querySelectorAll('.matrix-cell').forEach(cell => {
+                const r = parseInt(cell.dataset.r);
+                const c = parseInt(cell.dataset.c);
+                cell.classList.toggle('active', r <= maxR && c <= maxC);
+            });
+        }
+
+        function startGridDrag(e) {
+            e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'grid', rows: matrixR, cols: matrixC }));
+        }
+
+        // ===================== Viewport Events (Pan, Draw, Marquee) =====================
+        function setupViewportEvents() {
+            viewport.addEventListener('mousedown', (e) => {
+                if (e.target.closest('.dock-bar') || e.target.closest('.popover-menu') || e.target.closest('#boardSwitcherRoot') || e.target.closest('#connContextMenu') || e.target.closest('.canvas-card')) return;
+                
+                closePopovers();
+                closeBoardMenu();
+                if (typeof finishEditing === 'function') finishEditing();
+
+                const rect = viewport.getBoundingClientRect();
+                const canvasX = (e.clientX - rect.left - panX) / scale;
+                const canvasY = (e.clientY - rect.top - panY) / scale;
+
+                if (activeTool === 'pen' || activeTool === 'highlighter') {
+                    isDrawing = true;
+                    currentPathPoints = [{ x: canvasX, y: canvasY }];
+                    tempSketchPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                    tempSketchPath.setAttribute('stroke', currentPenColor);
+                    tempSketchPath.setAttribute('stroke-width', currentPenWidth);
+                    tempSketchPath.setAttribute('fill', 'none');
+                    tempSketchPath.setAttribute('stroke-linecap', 'round');
+                    tempSketchPath.setAttribute('stroke-linejoin', 'round');
+                    if (activeTool === 'highlighter') tempSketchPath.setAttribute('stroke-opacity', '0.4');
+                    sketchesGroup.appendChild(tempSketchPath);
+                    return;
+                }
+
+                if (e.button === 0 && !e.shiftKey) {
+                    clearSelection();
+                }
+
+                if (e.button === 1 || e.spaceKey || activeTool === 'select') {
+                    isPanning = true;
+                    startX = e.clientX - panX;
+                    startY = e.clientY - panY;
+                }
+            });
+
+            window.addEventListener('mousemove', (e) => {
+                if (isDrawing && tempSketchPath) {
+                    const rect = viewport.getBoundingClientRect();
+                    const canvasX = (e.clientX - rect.left - panX) / scale;
+                    const canvasY = (e.clientY - rect.top - panY) / scale;
+                    currentPathPoints.push({ x: canvasX, y: canvasY });
+                    tempSketchPath.setAttribute('d', generateSvgPathD(currentPathPoints));
+                    return;
+                }
+
+                if (isPanning) {
+                    panX = e.clientX - startX;
+                    panY = e.clientY - startY;
+                    updateTransform();
+                }
+            });
+
+            window.addEventListener('mouseup', () => {
+                if (isDrawing && tempSketchPath) {
+                    isDrawing = false;
+                    if (currentPathPoints.length > 1) {
+                        pushHistory();
+                        sketches.push({
+                            id: 's-' + Date.now(),
+                            type: activeTool,
+                            color: currentPenColor,
+                            width: currentPenWidth,
+                            d: generateSvgPathD(currentPathPoints)
+                        });
+                        saveToStorage();
+                    }
+                    if (tempSketchPath.parentNode) tempSketchPath.parentNode.removeChild(tempSketchPath);
+                    tempSketchPath = null;
+                    renderSketches();
+                }
+                isPanning = false;
+            });
+
+            viewport.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                if (e.ctrlKey || e.metaKey) {
+                    const delta = -e.deltaY * 0.002;
+                    zoomAtPoint(scale + delta, e.clientX, e.clientY);
+                } else {
+                    panX -= e.deltaX;
+                    panY -= e.deltaY;
+                    updateTransform();
+                }
+            }, { passive: false });
+        }
+
+        // ===================== Drag & Drop Palette =====================
+        function setupDragAndDrop() {
+            viewport.addEventListener('dragover', (e) => e.preventDefault());
+            viewport.addEventListener('drop', (e) => {
+                e.preventDefault();
+                const raw = e.dataTransfer.getData('text/plain');
+                if (!raw) return;
+                try {
+                    const data = JSON.parse(raw);
+                    const rect = viewport.getBoundingClientRect();
+                    const dropX = (e.clientX - rect.left - panX) / scale;
+                    const dropY = (e.clientY - rect.top - panY) / scale;
+
+                    pushHistory();
+                    if (data.type === 'grid') {
+                        cards.push({
+                            id: Date.now().toString(), type: 'grid', x: Math.round(dropX - 150), y: Math.round(dropY - 100),
+                            width: 450, height: 350, rows: data.rows || 2, cols: data.cols || 2, title: "Grid Container"
+                        });
+                    } else if (data.type === 'shape') {
+                        cards.push({
+                            id: Date.now().toString(), type: 'shape', x: Math.round(dropX - 60), y: Math.round(dropY - 60),
+                            width: 120, height: 120, shapeType: data.shapeType || 'rect'
+                        });
+                    } else {
+                        const newCard = { id: Date.now().toString(), type: data.type, x: Math.round(dropX - 100), y: Math.round(dropY - 50) };
+                        if (data.type === 'note') { newCard.width = 240; newCard.height = 180; newCard.title = "Note"; newCard.content = "New sticky note..."; }
+                        else if (data.type === 'text') { newCard.width = 180; newCard.height = 48; newCard.content = "Enter plain text..."; }
+                        else if (data.type === 'comment') { newCard.width = 260; newCard.height = 160; newCard.title = "Feedback"; newCard.content = "Comments..."; }
+                        else if (data.type === 'checklist') { newCard.width = 260; newCard.height = 200; newCard.title = "Tasks"; newCard.items = []; }
+                        else if (data.type === 'link') { newCard.width = 280; newCard.height = 220; newCard.pending = true; }
+                        else if (data.type === 'image') { newCard.width = 300; newCard.height = 220; newCard.pending = true; }
+                        else if (data.type === 'source') { newCard.width = 280; newCard.height = 230; newCard.title = "Untitled Source"; newCard.content = "Research notes..."; }
+                        cards.push(newCard);
+                    }
+                    saveToStorage();
+                    renderBoard();
+                } catch (err) {
+                    console.error("Drop error:", err);
+                }
+            });
+        }
+
+        function startPaletteDrag(event, type, shapeType) {
+            event.dataTransfer.setData('text/plain', JSON.stringify({ type, shapeType }));
+        }
+
+        // ===================== Board & Card Rendering =====================
+        function renderBoard() {
+            cardsContainer.innerHTML = '';
+            cards.forEach(card => {
+                const el = createCardElement(card);
+                cardsContainer.appendChild(el);
+            });
+            renderConnections();
+            renderSketches();
+            refreshSelectionUI();
+        }
+
+        function createCardElement(card) {
+            const div = document.createElement('div');
+            div.id = `card-${card.id}`;
+            div.className = `canvas-card absolute bg-white rounded-2xl border border-gray-200 shadow-md p-4 flex flex-col cursor-move select-none transition-shadow`;
+            div.style.left = `${card.x}px`;
+            div.style.top = `${card.y}px`;
+            div.style.width = `${card.width || 240}px`;
+            div.style.height = `${card.height || 180}px`;
+            if (card.color) div.style.backgroundColor = card.color;
+
+            // Header
+            let bodyContent = '';
+            if (card.type === 'note' || card.type === 'comment') {
+                bodyContent = `
+                    <div class="font-bold text-xs mb-2 border-b pb-1 flex justify-between items-center">
+                        <span contenteditable="true" onblur="updateCardField('${card.id}', 'title', this.textContent)">${escapeHtml(card.title || 'Note')}</span>
+                        <button onclick="deleteCard('${card.id}')" class="text-gray-400 hover:text-rose-500 text-xs">✕</button>
+                    </div>
+                    <div class="editable-content text-xs text-gray-700 flex-grow outline-none overflow-y-auto" contenteditable="true" onblur="updateCardField('${card.id}', 'content', this.innerHTML)">${card.content || ''}</div>
+                `;
+            } else if (card.type === 'text') {
+                div.className += ' bg-transparent border-none shadow-none p-1';
+                bodyContent = `
+                    <div class="editable-content text-sm text-gray-900 outline-none w-full h-full font-medium" contenteditable="true" onblur="updateCardField('${card.id}', 'content', this.innerHTML)">${card.content || 'Text'}</div>
+                `;
+            } else if (card.type === 'checklist') {
+                bodyContent = `
+                    <div class="font-bold text-xs mb-2 border-b pb-1 flex justify-between items-center">
+                        <span contenteditable="true" onblur="updateCardField('${card.id}', 'title', this.textContent)">${escapeHtml(card.title || 'Tasks')}</span>
+                        <button onclick="deleteCard('${card.id}')" class="text-gray-400 hover:text-rose-500 text-xs">✕</button>
+                    </div>
+                    <div class="space-y-1.5 flex-grow overflow-y-auto" id="checklist-${card.id}">
+                        ${(card.items || []).map((it, idx) => `
+                            <div class="flex items-center space-x-2 text-xs">
+                                <input type="checkbox" ${it.checked ? 'checked' : ''} onchange="toggleChecklistItem('${card.id}', ${idx})" class="rounded border-gray-300">
+                                <span class="${it.checked ? 'line-through text-gray-400' : 'text-gray-700'}">${escapeHtml(it.text)}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <button onclick="addChecklistItem('${card.id}')" class="mt-2 text-[11px] text-blue-600 font-bold hover:underline text-left">+ Add item</button>
+                `;
+            } else if (card.type === 'shape') {
+                div.className += ' bg-transparent border-none shadow-none flex items-center justify-center p-0';
+                bodyContent = `
+                    <div class="relative w-full h-full flex items-center justify-center">
+                        <svg class="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                            ${card.shapeType === 'circle' ? '<circle cx="50" cy="50" r="48" fill="#eff6ff" stroke="#3b82f6" stroke-width="2"/>' : ''}
+                            ${card.shapeType === 'triangle' ? '<polygon points="50,4 4,96 96,96" fill="#eff6ff" stroke="#3b82f6" stroke-width="2"/>' : ''}
+                            ${(!card.shapeType || card.shapeType === 'rect') ? '<rect x="2" y="2" width="96" height="96" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="2"/>' : ''}
+                        </svg>
+                        <button onclick="deleteCard('${card.id}')" class="absolute top-1 right-1 text-gray-400 hover:text-rose-500 text-xs">✕</button>
+                    </div>
+                `;
+            } else {
+                bodyContent = `
+                    <div class="font-bold text-xs mb-1 flex justify-between items-center">
+                        <span>${escapeHtml(card.type.toUpperCase())}</span>
+                        <button onclick="deleteCard('${card.id}')" class="text-gray-400 hover:text-rose-500 text-xs">✕</button>
+                    </div>
+                    <div class="text-xs text-gray-600">${escapeHtml(card.content || 'Item card')}</div>
+                `;
+            }
+
+            // Connection Ports
+            const ports = `
+                <div class="connection-port port-top" onmousedown="startConnection(event, '${card.id}', 'top')"></div>
+                <div class="connection-port port-right" onmousedown="startConnection(event, '${card.id}', 'right')"></div>
+                <div class="connection-port port-bottom" onmousedown="startConnection(event, '${card.id}', 'bottom')"></div>
+                <div class="connection-port port-left" onmousedown="startConnection(event, '${card.id}', 'left')"></div>
+                <div class="resize-handle" onmousedown="startCardResize(event, '${card.id}')"></div>
+            `;
+
+            div.innerHTML = bodyContent + ports;
+
+            // Card drag handling
+            div.addEventListener('mousedown', (e) => {
+                if (e.target.closest('button') || e.target.closest('input') || e.target.closest('[contenteditable="true"]') || e.target.classList.contains('connection-port') || e.target.classList.contains('resize-handle')) return;
+                
+                e.stopPropagation();
+                setSelection([card.id]);
+
+                const startMouseX = e.clientX;
+                const startMouseY = e.clientY;
+                const startCardX = card.x;
+                const startCardY = card.y;
+
+                div.classList.add('dragging');
+
+                function onMove(me) {
+                    const dx = (me.clientX - startMouseX) / scale;
+                    const dy = (me.clientY - startMouseY) / scale;
+                    let nx = Math.round(startCardX + dx);
+                    let ny = Math.round(startCardY + dy);
+
+                    if (snapToGridEnabled) {
+                        nx = Math.round(nx / snapGridSize) * snapGridSize;
+                        ny = Math.round(ny / snapGridSize) * snapGridSize;
+                    }
+
+                    card.x = nx;
+                    card.y = ny;
+                    div.style.left = nx + 'px';
+                    div.style.top = ny + 'px';
+                    renderConnections();
+                }
+
+                function onUp() {
+                    div.classList.remove('dragging');
+                    window.removeEventListener('mousemove', onMove);
+                    window.removeEventListener('mouseup', onUp);
+                    saveToStorage();
+                }
+
+                window.addEventListener('mousemove', onMove);
+                window.addEventListener('mouseup', onUp);
+            });
+
+            return div;
+        }
+
+        function updateCardField(id, field, value) {
+            const card = cards.find(c => c.id === id);
+            if (!card) return;
+            card[field] = value;
+            saveToStorage();
+        }
+
+        function deleteCard(id) {
+            pushHistory();
+            cards = cards.filter(c => c.id !== id);
+            connections = connections.filter(conn => conn.from !== id && conn.to !== id);
+            saveToStorage();
+            renderBoard();
+        }
+
+        function toggleChecklistItem(cardId, idx) {
+            const card = cards.find(c => c.id === cardId);
+            if (!card || !card.items || !card.items[idx]) return;
+            card.items[idx].checked = !card.items[idx].checked;
+            saveToStorage();
+            renderBoard();
+        }
+
+        function addChecklistItem(cardId) {
+            const card = cards.find(c => c.id === cardId);
+            if (!card) return;
+            const text = prompt('New task item:');
+            if (!text || !text.trim()) return;
+            if (!card.items) card.items = [];
+            card.items.push({ text: text.trim(), checked: false });
+            saveToStorage();
+            renderBoard();
+        }
+
+        // ===================== Card Resizing =====================
+        function startCardResize(e, cardId) {
+            e.stopPropagation();
+            const card = cards.find(c => c.id === cardId);
+            if (!card) return;
+
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const startW = card.width || 240;
+            const startH = card.height || 180;
+
+            function onMove(me) {
+                const dw = (me.clientX - startX) / scale;
+                const dh = (me.clientY - startY) / scale;
+                card.width = Math.max(140, Math.round(startW + dw));
+                card.height = Math.max(80, Math.round(startH + dh));
+                const el = document.getElementById(`card-${cardId}`);
+                if (el) {
+                    el.style.width = card.width + 'px';
+                    el.style.height = card.height + 'px';
+                }
+                renderConnections();
+            }
+
+            function onUp() {
+                window.removeEventListener('mousemove', onMove);
+                window.removeEventListener('mouseup', onUp);
+                saveToStorage();
+            }
+
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+        }
+
+        // ===================== Port Connections =====================
+        function startConnection(e, cardId, port) {
+            e.stopPropagation();
+            activePort = { cardId, port };
+            const fromPos = getPortCoordinates(cardId, port);
+
+            function onMove(me) {
+                const rect = viewport.getBoundingClientRect();
+                const curX = (me.clientX - rect.left - panX) / scale;
+                const curY = (me.clientY - rect.top - panY) / scale;
+                renderConnections({ x1: fromPos.x, y1: fromPos.y, x2: curX, y2: curY });
+            }
+
+            function onUp(ue) {
+                window.removeEventListener('mousemove', onMove);
+                window.removeEventListener('mouseup', onUp);
+                const targetPort = ue.target.closest('.connection-port');
+                if (targetPort) {
+                    const toCard = targetPort.closest('.canvas-card');
+                    if (toCard) {
+                        const toCardId = toCard.id.replace('card-', '');
+                        if (toCardId !== cardId) {
+                            pushHistory();
+                            connections.push({
+                                id: 'conn-' + Date.now(),
+                                from: cardId,
+                                to: toCardId,
+                                fromPort: port,
+                                toPort: 'top'
+                            });
+                            saveToStorage();
+                        }
+                    }
+                }
+                activePort = null;
+                renderConnections();
+            }
+
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+        }
+
+        function getPortCoordinates(cardId, port) {
+            const card = cards.find(c => c.id === cardId);
+            if (!card) return { x: 0, y: 0 };
+            const w = card.width || 240;
+            const h = card.height || 180;
+            if (port === 'top') return { x: card.x + w / 2, y: card.y };
+            if (port === 'bottom') return { x: card.x + w / 2, y: card.y + h };
+            if (port === 'left') return { x: card.x, y: card.y + h / 2 };
+            return { x: card.x + w, y: card.y + h / 2 };
+        }
+
+        function renderConnections(tempLine) {
+            connectionsGroup.innerHTML = '';
+            connections.forEach(conn => {
+                const p1 = getPortCoordinates(conn.from, conn.fromPort || 'bottom');
+                const p2 = getPortCoordinates(conn.to, conn.toPort || 'top');
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                const d = `M ${p1.x} ${p1.y} C ${p1.x} ${(p1.y + p2.y) / 2}, ${p2.x} ${(p1.y + p2.y) / 2}, ${p2.x} ${p2.y}`;
+                path.setAttribute('d', d);
+                path.setAttribute('stroke', '#1f2937');
+                path.setAttribute('stroke-width', '2.5');
+                path.setAttribute('fill', 'none');
+                path.setAttribute('marker-end', 'url(#arrow)');
+                path.classList.add('connection-line');
+                path.onclick = () => {
+                    if (confirm('Delete this connection line?')) {
+                        pushHistory();
+                        connections = connections.filter(c => c.id !== conn.id);
+                        saveToStorage();
+                        renderConnections();
+                    }
+                };
+                connectionsGroup.appendChild(path);
+            });
+
+            if (tempLine) {
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                path.setAttribute('d', `M ${tempLine.x1} ${tempLine.y1} L ${tempLine.x2} ${tempLine.y2}`);
+                path.setAttribute('stroke', '#3b82f6');
+                path.setAttribute('stroke-width', '2');
+                path.setAttribute('stroke-dasharray', '5,5');
+                path.setAttribute('fill', 'none');
+                connectionsGroup.appendChild(path);
+            }
+        }
+
+        // ===================== Admin & Settings =====================
+        function openAdminPinModal() {
+            document.getElementById('adminPinModal').classList.remove('hidden');
+            const inp = document.getElementById('adminPinInput');
+            if (inp) { inp.value = ''; inp.focus(); }
+        }
+        function closeAdminPinModal() { document.getElementById('adminPinModal').classList.add('hidden'); }
+        function verifyAdminPin() {
+            const pin = (document.getElementById('adminPinInput').value || '').trim();
+            if (pin === '0000') {
+                closeAdminPinModal();
+                openAdminPanelModal();
+            } else {
+                const err = document.getElementById('pinErrorMsg');
+                if (err) { err.textContent = 'Invalid PIN (Default is 0000)'; err.classList.remove('hidden'); }
+            }
+        }
+        function openAdminPanelModal() { document.getElementById('adminPanelModal').classList.remove('hidden'); }
+        function closeAdminPanelModal() { document.getElementById('adminPanelModal').classList.add('hidden'); }
+        function promptClearBoardConfirm() {
+            if (confirm('Clear the entire board for all users?')) {
+                pushHistory();
+                cards = []; connections = []; sketches = [];
+                saveToStorage();
+                renderBoard();
+                closeAdminPanelModal();
+            }
+        }
+        function exportBoardJSON() {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ cards, connections, sketches }, null, 2));
+            const dl = document.createElement('a');
+            dl.setAttribute("href", dataStr);
+            dl.setAttribute("download", `canvas_${currentBoardId}.json`);
+            dl.click();
+        }
+        function triggerImportJSON() { document.getElementById('importJsonInput').click(); }
+        function importBoardJSON(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const r = new FileReader();
+            r.onload = (evt) => {
+                try {
+                    const parsed = JSON.parse(evt.target.result);
+                    pushHistory();
+                    cards = ensureArray(parsed.cards);
+                    connections = ensureArray(parsed.connections);
+                    sketches = ensureArray(parsed.sketches);
+                    saveToStorage();
+                    renderBoard();
+                    closeAdminPanelModal();
+                } catch (err) {
+                    alert('Invalid JSON file');
+                }
+            };
+            r.readAsText(file);
+        }
+        function exportBoardPNG() {
+            closeAdminPanelModal();
+            document.body.classList.add('exporting');
+            html2canvas(document.getElementById('canvas-plane')).then(cv => {
+                document.body.classList.remove('exporting');
+                const link = document.createElement('a');
+                link.download = `canvas_${currentBoardId}.png`;
+                link.href = cv.toDataURL();
+                link.click();
+            }).catch(() => document.body.classList.remove('exporting'));
+        }
+
+        // ===================== Search & Format =====================
+        function applySearch(query) {
+            const q = (query || '').toLowerCase().trim();
+            cards.forEach(card => {
+                const el = document.getElementById(`card-${card.id}`);
+                if (!el) return;
+                if (!q) { el.classList.remove('search-match', 'search-dim'); return; }
+                const txt = `${card.title || ''} ${card.content || ''}`.toLowerCase();
+                if (txt.includes(q)) {
+                    el.classList.add('search-match');
+                    el.classList.remove('search-dim');
+                } else {
+                    el.classList.remove('search-match');
+                    el.classList.add('search-dim');
+                }
+            });
+        }
+
+        function formatText(cmd, val = null) {
+            document.execCommand(cmd, false, val);
+        }
+        function finishEditing() {
+            const active = document.activeElement;
+            if (active && active.isContentEditable) active.blur();
+        }
+    </script>
+</body>
+</html>
